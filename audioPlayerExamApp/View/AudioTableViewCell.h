@@ -8,7 +8,7 @@
 
 #import <UIKit/UIKit.h>
 
-@interface AudioTableViewCell : UITableViewCell
+@interface AudioTableViewCell : UITableViewCell 
 
 @property (weak, nonatomic) IBOutlet UILabel *audioUrlLbl;
 @property (weak, nonatomic) IBOutlet UIButton *playAudioBtn;

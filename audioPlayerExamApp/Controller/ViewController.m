@@ -10,13 +10,18 @@
 #import "UrlWithStatus.h"
 #import "AudioTableViewCell.h"
 #import <AVFoundation/AVFoundation.h>
+#import <AFNetworking.h>
 
 @interface ViewController () {
-    NSURLSession* mySession;
-    UIButton* lastTappedButton;
+    UIButton *lastTappedButton;
+    NSInteger lastTappedButtonIndex;
 }
+
 @property (strong, nonatomic) NSArray<NSString*> *mp3Urls;
 @property (strong, nonatomic) NSMutableArray<UrlWithStatus*> *mp3WithStatusArr;
+@property(nonatomic,strong) NSURLSession *mySession;
+@property NSURLSessionConfiguration *configuration;
+
 @end
 
 @implementation ViewController
@@ -49,58 +54,87 @@
 
 - (IBAction)downloadAll:(id)sender {
     // Downloading and saving in document.
+    if (self.mp3WithStatusArr.count != 0) {
+        return;
+    }
+    //Clean Document directory before adding new mp3 files.
+    NSArray *pathSong = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *path = [pathSong objectAtIndex:0];
+    [[NSFileManager defaultManager] removeItemAtPath:path error:nil];
+
     for (NSString *urlStr in self.mp3Urls) {
         UrlWithStatus *myUrl = [[UrlWithStatus alloc] initWithUrlPath:urlStr];
         [self.mp3WithStatusArr addObject:myUrl];
     }
+    // Reload table to show activity indicator.
     [self.audioTblView reloadData];
     
-    NSURLSessionConfiguration *config = [NSURLSessionConfiguration defaultSessionConfiguration];
-    mySession = [NSURLSession sessionWithConfiguration:config delegate:self delegateQueue:NSOperationQueue.mainQueue];
+    NSURLSessionConfiguration *configuration = [NSURLSessionConfiguration backgroundSessionConfigurationWithIdentifier:@"com.xtech.background.DownloadManager3"];
+    AFURLSessionManager *manager = [[AFURLSessionManager alloc] initWithSessionConfiguration:configuration];
     
-    for (UrlWithStatus *urlObj in self.mp3WithStatusArr) {
-        NSURLSessionDownloadTask *task = [mySession downloadTaskWithURL:[NSURL URLWithString:urlObj.urlPath] completionHandler:^(NSURL * _Nullable location, NSURLResponse * _Nullable response, NSError * _Nullable error) {
-            for (int i = 0; i < [self.mp3WithStatusArr count]; i++) {
-                if (self.mp3WithStatusArr[i].urlPath == urlObj.urlPath) {
-                    if (error == nil) {
-                        NSArray *pathSong = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
-                        NSString *tempPath = [[pathSong objectAtIndex:0] stringByAppendingPathComponent:[[urlObj.urlPath componentsSeparatedByString:@"/"] lastObject]];
-                        NSURL *url = [NSURL fileURLWithPath:tempPath];
-                        [[NSFileManager defaultManager]copyItemAtURL:location toURL:url error:nil];
-                        self.mp3WithStatusArr[i].savedPath = url;
-                        self.mp3WithStatusArr[i].status = 1;
-                    } else {
-                        self.mp3WithStatusArr[i].status = -1;
-                    }
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        [self.audioTblView reloadData];
-                    });
-                    break;
-                }
-            }
-        }];
-        [task resume];
+    for (int i = 0; i < [self.mp3WithStatusArr count]; i++) {
+        NSURL *URL = [NSURL URLWithString:self.mp3WithStatusArr[i].urlPath];
+        NSURLRequest *request = [NSURLRequest requestWithURL:URL];
+        
+        NSURLSessionDownloadTask *downloadTask = [manager downloadTaskWithRequest:request
+                                                                         progress:^(NSProgress * _Nonnull uploadProgress) {
+                                                                             dispatch_async(dispatch_get_main_queue(), ^{
+                                                                                 NSLog(@"%f", uploadProgress.fractionCompleted);
+                                                                             });
+                                                                         }
+                                                                      destination:^NSURL* (NSURL *targetPath, NSURLResponse *response) {
+                                                                          NSURL *documentsDirectoryURL = [[NSFileManager defaultManager] URLForDirectory:NSDocumentDirectory inDomain:NSUserDomainMask appropriateForURL:nil create:NO error:nil];
+                                                                          return [documentsDirectoryURL URLByAppendingPathComponent:[response suggestedFilename]];
+                                                                      } completionHandler:^(NSURLResponse *response, NSURL *filePath, NSError *error) {
+                                                                          if (error == nil) {
+                                                                              for (int i = 0; i < [self.mp3WithStatusArr count]; i++) {
+                                                                                  if ([self.mp3WithStatusArr[i].urlPath isEqualToString: response.URL.absoluteString]) {
+                                                                                      self.mp3WithStatusArr[i].savedPath = filePath;
+                                                                                      self.mp3WithStatusArr[i].status = 1;
+                                                                                      break;
+                                                                                  }
+                                                                              }
+                                                                          }
+                                                                          else {
+                                                                              for (int i = 0; i < [self.mp3WithStatusArr count]; i++) {
+                                                                                  if ([self.mp3WithStatusArr[i].urlPath isEqualToString: response.URL.absoluteString]) {
+                                                                                      self.mp3WithStatusArr[i].status = -1;
+                                                                                  }
+                                                                              }
+                                                                          }
+                                                                          dispatch_async(dispatch_get_main_queue(), ^{
+                                                                              [self.audioTblView reloadData];
+                                                                          });
+                                                                      }];
+        [downloadTask resume];
     }
+    
 }
 
 - (void) playBtnTapped:(UIButton *) sender {
     if (self.audioPlayer.isPlaying) {
         [self.audioPlayer stop];
         [lastTappedButton setTitle:@"Play" forState: UIControlStateNormal];
-        if (lastTappedButton == sender) {
+        if (lastTappedButtonIndex == sender.tag) {
+            lastTappedButton = nil;
+            lastTappedButtonIndex = -1;
             return;
         }
     }
     if (self.mp3WithStatusArr[sender.tag].savedPath != nil) {
         [sender setTitle:@"Stop" forState: UIControlStateNormal];
         self.audioPlayer = [[AVAudioPlayer alloc] initWithContentsOfURL:self.mp3WithStatusArr[sender.tag].savedPath error:nil];
-        [self.audioPlayer prepareToPlay];
+        Boolean succeedPlaying = [self.audioPlayer prepareToPlay];
         [[AVAudioSession sharedInstance] setCategory:AVAudioSessionCategoryPlayback error:nil];
         [[AVAudioSession sharedInstance] setActive: YES error: nil];
         [[UIApplication sharedApplication] beginReceivingRemoteControlEvents];
-        [self.audioPlayer play];
+        if (succeedPlaying) {
+            [sender setTitle:@"Stop" forState: UIControlStateNormal];
+            [self.audioPlayer play];
+        }
     }
     lastTappedButton = sender;
+    lastTappedButtonIndex = sender.tag;
 }
 
 #pragma mark - UITableViewDataSource
@@ -117,6 +151,7 @@
         cell = [[AudioTableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:CellIdentifier];
     }
     [cell constractCell];
+    cell.tag = indexPath.row;
     cell.audioUrlLbl.text = [[self.mp3WithStatusArr[indexPath.row].urlPath componentsSeparatedByString:@"/"] lastObject];
     
     [cell.playAudioBtn setHidden: (self.mp3WithStatusArr[indexPath.row].status == 0)];
@@ -125,11 +160,15 @@
     if (self.mp3WithStatusArr[indexPath.row].status == -1 ) {
         [cell.playAudioBtn setTitle:@"Fail" forState: UIControlStateNormal];
     } else if (self.mp3WithStatusArr[indexPath.row].status == 1) {
-        [cell.playAudioBtn setTitle:(self.audioPlayer.isPlaying && lastTappedButton == cell.playAudioBtn) ? @"Stop" : @"Play" forState: UIControlStateNormal];
+        [cell.playAudioBtn setTitle:(self.audioPlayer.isPlaying && lastTappedButtonIndex == cell.tag) ? @"Stop" : @"Play" forState: UIControlStateNormal];
     }
     [cell.playAudioBtn addTarget:self action:@selector(playBtnTapped:) forControlEvents: UIControlEventTouchUpInside];
     cell.playAudioBtn.tag = indexPath.row;
     return cell;
+}
+
+- (CGFloat)tableView:(UITableView *)tableView heightForRowAtIndexPath:(NSIndexPath *)indexPath {
+    return 44;
 }
 
 @end

@@ -14,8 +14,8 @@
 // status = -1 fail to load
 // in perfect code I will keep it as a struct.
 @property NSInteger status;
-@property NSString* urlPath;
-@property NSURL* savedPath;
+@property NSString *urlPath;
+@property NSURL *savedPath;
 
 -(instancetype)initWithUrlPath:(NSString*)url;
 @end
